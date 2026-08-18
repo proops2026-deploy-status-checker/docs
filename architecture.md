@@ -1,66 +1,93 @@
 # Architecture — Deploy Status Checker
 
-> **Status: DRAFT.** The service list and storage components below are settled (they come from the
-> project definition). The items marked **CONFIRM** are design decisions that must be resolved in the
-> discovery chain (Q3–Q6) and recorded in the IRDs before this diagram is final.
+> **Status: design settled at Q2 (Day 9).** Service boundaries, identity model and the push-only
+> ingestion model are decided. Remaining open items are listed at the bottom and are resolved in
+> Q3–Q5 before the IRDs are written.
+
+## Primary user
+
+**On-call engineer during an incident.** The question the whole system exists to answer:
+
+> *"Were there any deployments to production in the last 10 minutes?"*
+
+Every design decision below is judged against whether it makes that question faster to answer.
 
 ## System diagram
 
 ```mermaid
 graph TD
-  Client([Dashboard / Browser])
-  CI([CI Pipeline<br/>GitHub Actions])
+  OnCall([On-call engineer<br/>dashboard])
+  CI([CI pipeline<br/>one API key per service])
 
   subgraph Services
-    GW[api-gateway<br/>:3000]
-    DS[deploy-service<br/>:3001]
-    LS[log-service<br/>:3002]
+    GW[api-gateway<br/>:3000<br/>auth · routing · identity injection]
+    DS[deploy-service<br/>:3001<br/>deploy records · status]
+    LS[log-service<br/>:3002<br/>log lines · append-only]
   end
 
   subgraph Storage
     PG[(PostgreSQL<br/>:5432)]
-    RD[(Redis<br/>:6379)]
+    RD[(Redis<br/>:6379<br/>cache only)]
   end
 
-  Client -->|HTTP REST · JWT| GW
-  CI -->|HTTP REST · API key| GW
-  GW -->|/deploys/*| DS
-  GW -->|/deploys/:id/logs| LS
-  DS -->|reads/writes| PG
-  LS -->|writes append-only| PG
-  DS -->|cache current status| RD
+  OnCall -->|GET · JWT| GW
+  CI -->|POST · API key| GW
+  GW -->|"/deploys/* · X-Service-Name injected"| DS
+  GW -->|"/deploys/:id/logs"| LS
+  DS -->|read/write state| PG
+  LS -->|append log lines| PG
+  DS -->|cache latest status| RD
 ```
 
-## How to read this
+Solid arrows are synchronous HTTP. There are **no dashed arrows** — see settled decision 3: this
+system has no asynchronous workload, therefore no queue.
 
-- **Solid arrows** — synchronous HTTP calls.
-- **Dashed arrows** — asynchronous events through a queue. _None yet; see CONFIRM #3._
-- **Cylinders** — storage components.
-- **Two entry points** — humans authenticate with JWT, the CI pipeline with an API key. This is the
-  design decision that replaces a public registration flow; see IRD-003.
+## Settled decisions
 
-## Decisions still to confirm
-
-| # | Question | Where it gets recorded |
+| # | Decision | Recorded in |
 |---|---|---|
-| 1 | Do `deploy-service` and `log-service` share one PostgreSQL instance with a schema each, or one instance per service? | IRD-003 |
-| 2 | Does the gateway forward the caller identity downstream, and in what header? | IRD-003 |
-| 3 | Is there any genuinely asynchronous workload? If not, **no queue** — Redis stays cache-only, and this must be stated explicitly in IRD-003. | IRD-003 |
-| 4 | What exactly does Redis cache, with what TTL, invalidated when? If this cannot be written in three lines, drop Redis. | IRD-003 |
-| 5 | Does `log-service` write to Postgres directly, or does `deploy-service` proxy the write? | IRD-002 |
+| 1 | **Ingestion is push-only.** CI reports every deploy event. The system never probes running services. Pull-based runtime reconciliation is a Non-goal for Sprint 1. | DOP-001 Non-goals · IRD-003 |
+| 2 | **`log-service` stores real log content** — append-only log lines, its own retention. This is what justifies it as a separate service: thousands of text rows streaming in is a different write pattern from updating one status row. | IRD-002 |
+| 3 | **`log_url` also lives on the deploy record**, pointing back to the original CI run so the on-call engineer can jump to the full pipeline UI. Complements decision 2, does not replace it. | IRD-001 |
+| 4 | **No queue.** No workload in this system is genuinely asynchronous. Redis is cache-only. Stating this explicitly is deliberate — a queue added without a measurable reason is over-engineering. | IRD-003 |
+| 5 | **`environment` is a strict enum** — `production`, `staging`, `testing`, `development`. Free-text is rejected at the API with `400`, so `prod` never becomes a second spelling of `production`. | IRD-001 |
+| 6 | **No service registry table.** Service identity is derived from the API key: the gateway maps one key to one canonical service name and injects it downstream. CI cannot name itself in the request body. | IRD-003 |
+| 7 | **No role-based access control.** Read-only dashboard serves all human users identically. Team lead and QA views are Non-goals for Sprint 1. | DOP-001 Non-goals |
+| 8 | **`status` enum must include `ROLLED_BACK`.** Without it the on-call engineer cannot tell a successful deploy from one that was rolled back — the single case they most need to see. | IRD-001 |
 
 ## Service ownership
 
 | Service | Owns | Does NOT own |
 |---|---|---|
-| `api-gateway` | Routing, authentication, request forwarding | Any persistent data |
-| `deploy-service` | Deploy records, status transitions, current-state cache | Log content |
-| `log-service` | Append-only log entries, retention | Deploy status, users |
+| `api-gateway` | Routing, JWT + API-key validation, **service-identity mapping (configuration, not data)**, stripping spoofed identity headers | Any persistent data |
+| `deploy-service` | Deploy records, status transitions, `environment`, `log_url`, latest-status cache | Log content |
+| `log-service` | Append-only log lines, log retention | Deploy status, identity, users |
+
+## Decision log — Q3 to Q5 (all closed)
+
+| # | Question | Where it lands |
+|---|---|---|
+| A | ~~One instance or two?~~ **RESOLVED Q4.** One PostgreSQL instance, **one schema per service**, one DB user per schema with no cross-grants — so `deploy_svc_user` physically cannot read `log_svc`. Ownership is enforced by the database, not by documentation. Trade-off to state plainly: a shared instance is a shared failure domain and shared resources; production would separate them. | IRD-003 |
+| B | ~~Header name + strip rule~~ **RESOLVED Q5.** All injected headers use the `X-Gw-` prefix. The gateway strips every inbound `X-Gw-*` header **by prefix, never by an enumerated list** — a list goes stale the day a new injected header is added, making it spoofable. The gateway also strips the credential itself before forwarding. | IRD-003 |
+| C | ~~What does Redis cache?~~ **RESOLVED Q3.** Not the rolling time-window query — every request carries a different `since`, so the cache key always misses. Redis caches the projection **latest deploy per (service, environment)**: a small bounded key set, read constantly by the dashboard, invalidated on deploy create and on status change. | IRD-003 |
+| D | ~~Does log-service validate deploy_id?~~ **RESOLVED Q3.** No. Validating would mean a synchronous call to `deploy-service` on the hottest write path — latency and coupling for little gain. Orphan log rows are tolerated and cleaned by a periodic job. | IRD-002 |
+| E | ~~How is the service list produced?~~ **RESOLVED Q5.** Not `SELECT DISTINCT`. A `GET /overview` endpoint returns the latest deploy per (service, environment) straight from the Redis projection — it is the dashboard landing page AND the service list, and it finally gives the cache a consumer. Must never 5xx when Redis is down: rebuild from `idx_deploys_service_env_started`. Redis is a cache, never a dependency. | IRD-001 + IRD-003 |
+| F | ~~API-key rotation~~ **RESOLVED Q5 — Non-goal, documented.** Keys are static gateway config; rotation = edit config + redeploy. No revocation list, no expiry. Accepted risk; mitigation is that keys never leave CI secret storage. Revisit when the gateway gains a datastore. | IRD-003 |
+| G | ~~Idempotency on POST /deploys~~ **RESOLVED — build it in Sprint 1.** `X-Idempotency-Key` is REQUIRED (missing → 400), stored as `ci_run_id`, enforced by `UNIQUE (service, environment, ci_run_id)`. A replay returns `200` with the existing record; a create returns `201`. Built now because the constraint is free on an empty table and a migration nightmare once duplicates exist. | IRD-001 |
+| H | ~~Authorization on PATCH~~ **RESOLVED.** The UPDATE carries `AND service = <injected name>`. Rowcount 0 returns `404 DEPLOY_NOT_FOUND` — not `403`, which would leak that another service owns that id. One code path covers both cases. | IRD-001 |
+| I | ~~Hard limits on the read path~~ **RESOLVED.** `since` required, window ≤ 7 days, `limit` default 50 / max 200. Violations return `400 VALIDATION_FAILED`. Prevents an unbounded `GET /deploys` degrading into a full table scan as the table grows. | IRD-001 |
+| J | ~~updated_at maintenance~~ **RESOLVED Q5.** Handled by the ORM (Prisma `@updatedAt`), not a database trigger — a trigger is invisible behaviour, and with a single write path the risk of forgetting is negligible. Revisit if `deploys` gains a second write path. | IRD-001 |
+
+## Known blind spot
+
+Push-only ingestion means **any deploy that bypasses CI is invisible** — a manual deploy, an emergency
+hotfix applied by hand. The on-call engineer would see nothing and conclude nothing changed, which is
+the exact failure this system exists to prevent. Recorded as an assumption in DOP-001: the system
+assumes all deploys go through CI. Closing this gap requires pull-based reconciliation (Non-goal, Sprint 2).
 
 ## Out of scope
 
-Recorded here so it stays out of the IRDs and out of Sprint 1:
-
 - Full-text search over logs
 - Log streaming / tailing
-- Triggering deployments — this system **observes** deploys, it does not perform them
+- Triggering deployments — this system **observes** deploys, it never performs them
+- Role-based access control
