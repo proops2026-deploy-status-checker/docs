@@ -32,7 +32,7 @@ graph TD
 
   OnCall -->|GET · JWT| GW
   CI -->|POST · API key| GW
-  GW -->|"/deploys/* · X-Service-Name injected"| DS
+  GW -->|"/deploys/* · X-Gw-Service-Name injected"| DS
   GW -->|"/deploys/:id/logs"| LS
   DS -->|read/write state| PG
   LS -->|append log lines| PG
