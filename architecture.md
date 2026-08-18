@@ -54,6 +54,9 @@ system has no asynchronous workload, therefore no queue.
 | 6 | **No service registry table.** Service identity is derived from the API key: the gateway maps one key to one canonical service name and injects it downstream. CI cannot name itself in the request body. | IRD-003 |
 | 7 | **No role-based access control.** Read-only dashboard serves all human users identically. Team lead and QA views are Non-goals for Sprint 1. | DOP-001 Non-goals |
 | 8 | **`status` enum must include `ROLLED_BACK`.** Without it the on-call engineer cannot tell a successful deploy from one that was rolled back — the single case they most need to see. | IRD-001 |
+| 9 | **Rollback is a two-step protocol, both steps required.** `PATCH` the failed deploy to `ROLLED_BACK`, then `POST` a new deploy for the restored version carrying `rolled_back_from`. Recording only one step leaves half a picture. Crucially, the rollback `POST` needs its **own** idempotency key (`<run_id>-rollback-<n>`) — reusing the original run id makes `UNIQUE (service, environment, ci_run_id)` silently reject the very record on-call needs. This protocol is also the only one that makes `/overview` answer *what is running now* rather than *what just failed*. | DOP-001 AC-11 + IRD-001 |
+| 10 | **No authentication service.** Nothing here issues a JWT — no `user-service`, no user table; the gateway only verifies. Sprint 1 mints tokens manually with the shared secret. Building auth would consume the sprint without advancing a single acceptance criterion. | DOP-001 Non-goals + IRD-003 |
+| 11 | **`GET /deploys` is cursor-paginated.** `limit` alone silently truncates a window holding more rows than the cap — and silent truncation is the exact failure this product exists to eliminate. The cursor is composite (`started_at` + `id`) because `started_at` is not unique. | IRD-001 |
 
 ## Service ownership
 

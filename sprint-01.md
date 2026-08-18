@@ -16,11 +16,12 @@ Both members are Developers. Roles swap in Sprint 2.
 
 ## Acceptance criteria in scope
 
-Covers **DOP-001 AC 1, 2, 3, 4, 5, 6, 8, 9**.
+Covers **DOP-001 AC 1, 2, 3, 4, 5, 6, 8, 9**. AC 11 is schema-only in this sprint — see US-04.
 
 Explicitly **not** in Sprint 1:
 - **AC 7** (log retrieval) — belongs to `log-service`, Sprint 2
 - **AC 10** (overview survives Redis outage) — `/overview` and the Redis projection are Sprint 2
+- The `/overview` half of **AC 11** — it needs the projection, so Sprint 1 proves the rollback protocol at the API and data level only
 
 ---
 
@@ -30,7 +31,7 @@ Explicitly **not** in Sprint 1:
 Satisfies AC 1, AC 2, AC 8.
 
 - [ ] `Tien` Scaffold Express + TypeScript, fail-fast config loader that exits non-zero on any missing required env var
-- [ ] `Duc` Prisma schema and migration `001_init` for `deploys` — all six CHECK constraints plus `UNIQUE (service, environment, ci_run_id)`
+- [ ] `Duc` Prisma schema and migration `001_init` for `deploys` — all six CHECK constraints, `UNIQUE (service, environment, ci_run_id)`, the `rolled_back_from` self-FK and its not-self CHECK. Generate with `prisma migrate dev --create-only`, then hand-edit the SQL: Prisma cannot express CHECK constraints or partial indexes
 - [ ] `Tien` `POST /deploys` handler with validation: `environment` enum, non-empty `version`, reject a `service` key in the body with `400 SERVICE_NOT_ACCEPTED`
 - [ ] `Duc` Idempotency path: `X-Idempotency-Key` required; on unique conflict return `200` with the existing record instead of `201`
 - [ ] `Duc` Integration test: create returns `201`, replay returns `200`, row count stays at 1
@@ -48,10 +49,20 @@ Satisfies AC 3, AC 4, AC 9.
 Satisfies AC 5, AC 6. **This is the survival query — the reason the product exists.**
 
 - [ ] `Duc` Migration `002_indexes`: `idx_deploys_env_started` plus the production partial index
-- [ ] `Tien` `GET /deploys` — `since` required, window capped at 7 days, `limit` default 50 / max 200, violations return `400`
+- [ ] `Tien` `GET /deploys` — `since` required, window capped at 7 days, `limit` default 50 / max 200, **composite cursor** (`started_at` + `id`) with `next_cursor` in the response; violations return `400`
 - [ ] `Tien` `GET /deploys/:id` — `200` or `404`
 - [ ] `Duc` Integration test: filters by environment and window, newest first, and an empty window returns `200 []` — never `404`
 - [ ] `Duc` Verify with `EXPLAIN ANALYZE` on seeded data that the query shows an index scan with **no `Sort` and no `Seq Scan`**
+
+### US-04 — As an on-call engineer, I want a rollback to show both what failed and what is running now
+
+> **DEFERRED TO SPRINT 2** by Product Owner decision — see Load check. The `rolled_back_from` column stays in migration `001_init` (free on an empty table); everything below moves.
+Satisfies the data and endpoint half of AC 11.
+
+- [ ] `Tien` Accept `rolled_back_from` on `POST /deploys`; validate it references a deploy of the same service and environment, else `400`
+- [ ] `Tien` Reject a `status` field in the `POST` body — every deploy is born `STARTED`
+- [ ] `Duc` Integration test: PATCH to `ROLLED_BACK` then POST the restored version — the query returns both rows in time order
+- [ ] `Duc` Integration test: a rollback POST reusing the original idempotency key returns `200` with the original record and creates nothing — proves why the `<run_id>-rollback-<n>` convention is mandatory
 
 ### Cross-cutting
 
@@ -61,17 +72,21 @@ Satisfies AC 5, AC 6. **This is the survival query — the reason the product ex
 
 ---
 
-## Load check
+## Load check — the sprint is over capacity, and here is the cut
 
 | Person | Tasks |
 |---|---|
-| `Tien` | 8 |
-| `Duc` | 9 |
+| `Tien` | 11 |
+| `Duc` | 11 |
 
-Seventeen tasks across three days for two people is tight. If the sprint slips, the Product Owner
-defers the two Docker tasks first — they are prerequisites for Day 11, not for the acceptance
-criteria. **The query path (US-03) is never the thing that gets cut.**
+Twenty-two tasks across three days for two people is **roughly 3.7 tasks per person per day**. That is not a sprint, it is a wish. The honest reading: US-04 arrived after this backlog was first drafted, when the Day 9 quality gate exposed the rollback ambiguity and AC-11 was added to DOP-001. New scope after planning has to displace something, not stack on top.
 
+**Product Owner decision — defer US-04 to Sprint 2**, with one exception:
+
+- The `rolled_back_from` column, its self-FK and its not-self CHECK **stay in migration `001_init`**. Adding a column to an empty table is free; adding it later to a populated one is a migration with a backfill. Exactly the argument that put idempotency in Sprint 1.
+- The endpoint validation and the four rollback tests move to Sprint 2, alongside `/overview` — which AC-11 needs anyway.
+
+That leaves **18 tasks**, `Tien` 9 and `Duc` 9. Still tight, and if it slips further the next cut is the two Docker tasks: they are prerequisites for Day 11, not for any acceptance criterion. **The query path (US-03) is never what gets cut** — it is the reason the product exists.
 ---
 
 ## Definition of Done
