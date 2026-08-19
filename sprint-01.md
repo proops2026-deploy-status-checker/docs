@@ -6,7 +6,7 @@
 
 | Field | Value |
 |---|---|
-| **Duration** | Day 10 – Day 12 (3 days) |
+| **Duration** | Day 10 – Day 16 · **1 week** · Tue 18 Aug → Mon 24 Aug 2026 |
 | **Goal** | `deploy-service` records deploy events and answers the on-call query, end to end, in a container |
 | **Scope** | `deploy-service` only — not the gateway, not `log-service` |
 | **Product Owner** | Nguyen Hoang Thao Tien · `tien_nht` |
@@ -79,14 +79,33 @@ Satisfies the data and endpoint half of AC 11.
 | `Tien` | 11 |
 | `Duc` | 11 |
 
-Twenty-two tasks across three days for two people is **roughly 3.7 tasks per person per day**. That is not a sprint, it is a wish. The honest reading: US-04 arrived after this backlog was first drafted, when the Day 9 quality gate exposed the rollback ambiguity and AC-11 was added to DOP-001. New scope after planning has to displace something, not stack on top.
+**Sprint length changed from 3 days to 1 week before the sprint started.** The original three-day plan
+assumed three full implementation days. It does not survive contact with the calendar: Day 10 is spent
+learning Docker Compose, and Day 12 opens the CI/CD topic and owes IRD-004. That left roughly a day and a
+half of real build time for eighteen tasks — which is not a plan, it is a wish. Changing the length **before**
+starting is planning; changing it after starting would be the thing Scrum forbids, because a sprint whose
+end date moves stops measuring anything.
+
+Twenty-two tasks across three days for two people would have been **roughly 3.7 tasks per person per day**.
+The honest reading: US-04 arrived after this backlog was first drafted, when the Day 9 quality gate exposed
+the rollback ambiguity and AC-11 was added to DOP-001. New scope after planning has to displace something,
+not stack on top.
 
 **Product Owner decision — defer US-04 to Sprint 2**, with one exception:
 
 - The `rolled_back_from` column, its self-FK and its not-self CHECK **stay in migration `001_init`**. Adding a column to an empty table is free; adding it later to a populated one is a migration with a backfill. Exactly the argument that put idempotency in Sprint 1.
 - The endpoint validation and the four rollback tests move to Sprint 2, alongside `/overview` — which AC-11 needs anyway.
 
-That leaves **18 tasks**, `Tien` 9 and `Duc` 9. Still tight, and if it slips further the next cut is the two Docker tasks: they are prerequisites for Day 11, not for any acceptance criterion. **The query path (US-03) is never what gets cut** — it is the reason the product exists.
+That leaves **18 tasks**, `Tien` 9 and `Duc` 9. Across a one-week sprint that is **about 1.3 tasks per person
+per day** — achievable even though training runs in parallel and no day is a full build day.
+
+**Cut order if it still slips**, decided now rather than on the last morning:
+
+1. **US-02** (`PATCH`, the outcome path) goes first. On-call can still answer the question the product exists
+   for without it; they simply see every deploy as `STARTED`. Losing it costs AC 3, 4, 9.
+2. The two Docker tasks would have been the earlier cut, but Day 10 does them anyway — they are prerequisites
+   for every following day, not for any single acceptance criterion.
+3. **US-03 is never what gets cut.** It is the reason the product exists.
 ---
 
 ## Definition of Done
