@@ -6,7 +6,7 @@
 
 | Field | Value |
 |---|---|
-| **Duration** | Day 10 – Day 16 · **1 week** · Tue 18 Aug → Mon 24 Aug 2026 |
+| **Duration** | Day 10 – Day 16 · **1 week** · Wed 19 Aug → Tue 25 Aug 2026 |
 | **Goal** | `deploy-service` records deploy events and answers the on-call query, end to end, in a container |
 | **Scope** | `deploy-service` only — not the gateway, not `log-service` |
 | **Product Owner** | Nguyen Hoang Thao Tien · `tien_nht` |
